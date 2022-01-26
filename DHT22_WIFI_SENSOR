@@ -1,0 +1,144 @@
+#include <SPI.h> // for WIFI
+#include <WiFiNINA.h> // for WIFI
+#include "DHT.h" //for DHT22 Sensor
+#include <iostream> //for json serealizing
+#include "ArduinoJson.h" // for RTCzero realtime clock
+
+#define DHTPIN 2     // Digital pin connected to the DHT sensor
+#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+
+char ssid[] = "ssid";        // your network SSID (name)
+char pass[] = "password";    // your network password (use for WPA, or use as key for WEP)
+
+int status = WL_IDLE_STATUS;
+
+DHT dht(DHTPIN, DHTTYPE); //Initialize DHT22 Sensor
+WiFiClient client; // Initialize the WiFi client library
+
+// server address:
+IPAddress server(127,0,0,1);
+int SERVER_PORT = 8080;
+
+char SENSOR_ROOM[] = "LIVING_ROOM";
+String SENSOR_ID = "001";
+
+unsigned long lastConnectionTime = 0;            // last time you connected to the server, in milliseconds
+const unsigned long postingInterval = 10L * 1000L; // delay between updates, in milliseconds
+
+void setup() {
+  //Initialize serial and wait for port to open:
+  Serial.begin(9600);
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  Serial.println("Sensor ID: " + SENSOR_ID);
+  dht.begin();
+
+  if (WiFi.status() == WL_NO_MODULE) {
+    Serial.println("Communication with WiFi module failed!");
+    // don't continue
+    while (true);
+  }
+  String fv = WiFi.firmwareVersion();
+  if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
+    Serial.println("Please upgrade the firmware");
+  }
+
+  // attempt to connect to WiFi network:
+  while (status != WL_CONNECTED) {
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(ssid);
+    // Connect to WPA/WPA2 network.
+    status = WiFi.begin(ssid, pass);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(10000);
+    digitalWrite(LED_BUILTIN, LOW);
+    // wait 10 seconds for connection:
+  }
+  // you're connected now, so print out the status:
+  test_blink(100, 5);
+  printWifiStatus();
+}
+
+void loop() {
+
+  // if there's incoming data from the net connection.
+  // send it out the serial port.  This is for debugging
+  // purposes only:
+  while (client.available()) {
+    char c = client.read();
+    Serial.write(c);
+  }
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  httpRequest(create_json_string(h,t));
+}
+
+void httpRequest(String json) {
+  // close any connection before send a new request.
+  // This will free the socket on the NINA module
+  client.stop();
+
+  // if there's a successful connection:
+  if (client.connect(server, SERVER_PORT)) {
+    Serial.println("connecting...");
+    client.println("POST /temp-humidity HTTP/1.1");
+    client.println("Content-Type: application/json");
+    client.println("host: Arduino");
+    client.print("Content-Length: ");
+    client.println(json.length());
+    client.println("Connection: close");
+    client.println();
+    client.print(json);
+
+    // note the time that the connection was made:
+    lastConnectionTime = millis();
+    test_blink(500, 2);
+  } else {
+    // if you couldn't make a connection:
+    test_blink(50, 20);
+    Serial.println("connection failed");
+  }
+}
+
+String create_json_string(float humidity, float temp){
+  DynamicJsonDocument doc(2048);
+  doc["humidity"] = humidity;
+  doc["temp"] = temp;
+  doc["sensor_id"] = SENSOR_ID;
+  doc["room"] = SENSOR_ROOM;
+  doc["measurement_time"] = WiFi.getTime();
+
+  // Serialize JSON document
+  String json;
+  serializeJson(doc, json);
+  return json;
+}
+
+void printWifiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your board's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
+}
+
+void test_blink(int delayInMS, int amountOfBlinks) {
+  int i = 0;
+  while (i < amountOfBlinks){
+     digitalWrite(LED_BUILTIN, HIGH);
+     delay(delayInMS);
+     digitalWrite(LED_BUILTIN, LOW);
+     delay(delayInMS);
+     i ++;
+  }
+
+}
